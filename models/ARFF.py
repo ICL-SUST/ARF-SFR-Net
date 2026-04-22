@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from torch.distributions import Bernoulli
 
 from models.ARF import arf
-import torch_dct as dct
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -74,35 +73,27 @@ class BasicBlock(nn.Module):
                  block_size=1, max_pool=True):
         super(BasicBlock, self).__init__()
 
-        # self.conv1 = conv3x3(inplanes, planes)
-        if planes == 4:
-        # if planes in (64, 160):
-            self.conv1 = ConvBlock1(inplanes, planes)
-            self.use_arconv1 = True
-        else:
-            self.conv1 = conv3x3(inplanes, planes)
-            self.use_arconv1 = False
+        self.planes = planes
+        # self.arconv1 = arARConv(
+        #     inplanes,
+        #     planes,
+        #     3,
+        #     1,
+        #     1
+        # )
+        self.arconv2 = arf(planes, planes,3,1,1)
+        self.arconv3 = arf(planes, planes, 3, 1, 1)
+
+        self.conv1 = conv3x3(inplanes, planes)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.LeakyReLU(0.1)
 
-        # self.conv2 = ConvBlock1(planes, planes)
-        # self.conv2 = conv3x3(planes, planes)
-        if planes in (320, 640):
-        # if planes == 640:
-            self.conv2 = ConvBlock1(planes, planes)
-            self.use_arconv2 = True
-        else:
-            self.conv2 = conv3x3(planes, planes)
-            self.use_arconv2 = False
+        self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
+
         self.conv3 = conv3x3(planes, planes)
-        # if planes == 64:
-        #     self.conv3 = ConvBlock1(planes, planes)
-        #     self.use_arconv3 = True
-        # else:
-        #     self.conv3 = conv3x3(planes, planes)
-        #     self.use_arconv3 = False
         self.bn3 = nn.BatchNorm2d(planes)
+
         self.maxpool = nn.MaxPool2d(stride)
         self.downsample = downsample
         self.stride = stride
@@ -118,35 +109,35 @@ class BasicBlock(nn.Module):
 
         residual = x
 
-        # out = self.conv1(x)
-        if self.use_arconv1:
-            out = self.conv1(x, epoch, hw_range)
-        else:
-            out = self.conv1(x)
+        # if self.planes >= 160:
+        #     out = self.arconv1(x, epoch, hw_range)
+        # else:
+        #     out = self.conv1(x)
+
+        out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
 
-        # out = self.conv2(out, epoch, hw_range)
         # out = self.conv2(out)
-        if self.use_arconv2:
-            out = self.conv2(out, epoch, hw_range)
+        if self.planes >= 320:
+            out = self.arconv2(out, epoch, hw_range)
         else:
             out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
 
-        out = self.conv3(out)
-        # if self.use_arconv3:
-        #     out = self.conv2(out, epoch, hw_range)
-        # else:
-        #     out = self.conv2(out)
+        # out = self.conv3(out)
+        if self.planes >= 320:
+            out = self.arconv3(out, epoch, hw_range)
+        else:
+            out = self.conv3(out)
         out = self.bn3(out)
 
         if self.downsample is not None:
             residual = self.downsample(x)
         # print(f"block: {self.__class__.__name__}, out: {out.shape}, residual: {residual.shape}")
 
-        out += residual
+        out += residual     # 残差★
         out = self.relu(out)
 
         if self.max_pool:
@@ -163,31 +154,10 @@ class BasicBlock(nn.Module):
 
         return out
 
-class ConvBlock1(nn.Module):
-
-    def __init__(self, input_channel, output_channel):
-        super().__init__()
-
-        self.conv1 = arf(
-            input_channel,
-            output_channel,
-            3,
-            1,
-            1
-        )
-        self.conv = nn.Conv2d(input_channel, output_channel, kernel_size=3, padding=1)
-        self.bn = nn.BatchNorm2d(output_channel)
-
-    # 前向传播
-    def forward(self, inp, epoch, hw_range):
-        inp = self.conv1(inp, epoch, hw_range)
-        inp = self.bn(inp)
-        return inp  # 将输入 inp 传递给 self.layers，返回卷积块的输出
-
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, n_blocks, drop_rate=0.0, dropblock_size=5, max_pool=True, mask_size=16):
+    def __init__(self, block, n_blocks, drop_rate=0.0, dropblock_size=5, max_pool=True):
         super(ResNet, self).__init__()
 
         self.inplanes = 3
@@ -202,7 +172,6 @@ class ResNet(nn.Module):
                                        max_pool=max_pool)
 
         self.drop_rate = drop_rate
-        self.spectral_mask = SpectralSoftMask(channels=3, mask_size=mask_size)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -248,56 +217,16 @@ class ResNet(nn.Module):
         return x
 
     def forward(self, x, epoch=None, hw_range=None):
-        # x =dct.dct_2d(x)
-        # x = self.spectral_mask(x)
-        # x = dct.idct_2d(x)
         x = self.forward_layer(self.layer1, x, epoch, hw_range)
         x = self.forward_layer(self.layer2, x, epoch, hw_range)
         x = self.forward_layer(self.layer3, x, epoch, hw_range)
         x = self.forward_layer(self.layer4, x, epoch, hw_range)
         return x
 
-class SpectralSoftMask(nn.Module):
-    def __init__(self, channels=3, mask_size=16):
-        super().__init__()
-        self.mask = nn.Parameter(torch.ones(1, channels, mask_size, mask_size))
-    def forward(self, freq_feat):
-        B, C, H, W = freq_feat.shape
-        mask = F.interpolate(self.mask, size=(H, W), mode='bilinear', align_corners=False)
-        return freq_feat * mask
-
-# class SpectralSoftMask(nn.Module):
-#     def __init__(self, channels=3, mask_size=16, m_min=0.5, m_max=1.5):
-#         super().__init__()
-#         self.m_min, self.m_max = m_min, m_max
-#         self.mask_logit = nn.Parameter(torch.zeros(1, channels, mask_size, mask_size))
-#         # 可选：初始化成“高左上、低右下”的低通先验
-#         with torch.no_grad():
-#             H = W = mask_size
-#             yy, xx = torch.meshgrid(torch.arange(H), torch.arange(W), indexing='ij')
-#             r = (yy + xx).float() / (H + W)
-#             prior = 1.0 - r  # 低频大
-#             self.mask_logit.copy_(torch.logit(torch.clamp((prior - m_min)/(m_max - m_min), 1e-4, 1-1e-4))[None, None])
-#     def forward(self, freq_feat):
-#         B, C, H, W = freq_feat.shape
-#         logit = F.interpolate(self.mask_logit, size=(H, W), mode='bilinear', align_corners=False)
-#         mask = torch.sigmoid(logit) * (self.m_max - self.m_min) + self.m_min
-#         return freq_feat * mask
 
 
 def resnet12(drop_rate=0.0, max_pool=True, **kwargs):
     """Constructs a ResNet-12 model.
     """
-
     model = ResNet(BasicBlock, [1, 1, 1, 1], drop_rate=drop_rate, max_pool=max_pool, **kwargs)
-
     return model
-
-
-
-if __name__ == '__main__':
-    model = resnet12()
-    data = torch.randn(2, 3, 84, 84)
-    H, W = data.shape[-2:]          # (84, 84)
-    x = model(data, epoch=0, hw_range=(H, W))
-    print(x.shape)
