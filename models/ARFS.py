@@ -73,37 +73,25 @@ class BasicBlock(nn.Module):
                  block_size=1, max_pool=True):
         super(BasicBlock, self).__init__()
 
-        # self.conv1 = conv3x3(inplanes, planes)
-        # self.conv1 = ConvBlock1(inplanes, planes)
-        # if planes in (320, 640):
-        if planes == 4:
-            self.conv1 = ConvBlock1(inplanes, planes)
-            self.use_arconv1 = True
+        self.planes = planes
+        # self.arconv1 = arARConv(
+        #     inplanes,
+        #     planes,
+        #     3,
+        #     1,
+        #     1
+        # )
+        self.arconv2 = arf(planes, planes,3,1,1)
+        self.arconv3 = arf(planes, planes, 3, 1, 1)
 
-        else:
-            self.conv1 = conv3x3(inplanes, planes)
-            self.use_arconv1 = False
+        self.conv1 = conv3x3(inplanes, planes)
         self.bn1 = nn.BatchNorm2d(planes)
         self.relu = nn.LeakyReLU(0.1)
 
-        # self.conv2 = conv3x3(planes, planes)
-        if planes in (320, 640):
-        #if planes == 4:
-            self.conv2 = ConvBlock1(planes, planes)
-            self.use_arconv2 = True
-        else:
-            self.conv2 = conv3x3(planes, planes)
-            self.use_arconv2 = False
+        self.conv2 = conv3x3(planes, planes)
         self.bn2 = nn.BatchNorm2d(planes)
 
-        # self.conv3 = conv3x3(planes, planes)
-        # if planes in (320, 640):
-        if planes == 6:
-            self.conv3 = ConvBlock1(planes, planes)
-            self.use_arconv3 = True
-        else:
-            self.conv3 = conv3x3(planes, planes)
-            self.use_arconv3 = False
+        self.conv3 = conv3x3(planes, planes)
         self.bn3 = nn.BatchNorm2d(planes)
 
         self.maxpool = nn.MaxPool2d(stride)
@@ -121,26 +109,26 @@ class BasicBlock(nn.Module):
 
         residual = x
 
-        # out = self.conv1(x)
-        # out = self.conv1(x, epoch, hw_range)
-        if self.use_arconv1:
-            out = self.conv1(x, epoch, hw_range)
-        else:
-            out = self.conv1(x)
+        # if self.planes >= 160:
+        #     out = self.arconv1(x, epoch, hw_range)
+        # else:
+        #     out = self.conv1(x)
+
+        out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
 
         # out = self.conv2(out)
-        if self.use_arconv2:
-            out = self.conv2(out, epoch, hw_range)
+        if self.planes >= 320:
+            out = self.arconv2(out, epoch, hw_range)
         else:
-           out = self.conv2(out)
+            out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
 
         # out = self.conv3(out)
-        if self.use_arconv3:
-            out = self.conv3(out, epoch, hw_range)
+        if self.planes >= 320:
+            out = self.arconv3(out, epoch, hw_range)
         else:
             out = self.conv3(out)
         out = self.bn3(out)
@@ -149,7 +137,7 @@ class BasicBlock(nn.Module):
             residual = self.downsample(x)
         # print(f"block: {self.__class__.__name__}, out: {out.shape}, residual: {residual.shape}")
 
-        out += residual
+        out += residual     # 残差★
         out = self.relu(out)
 
         if self.max_pool:
@@ -165,26 +153,6 @@ class BasicBlock(nn.Module):
                 out = F.dropout(out, p=self.drop_rate, training=self.training, inplace=True)
 
         return out
-
-class ConvBlock1(nn.Module):
-
-    def __init__(self, input_channel, output_channel):
-        super().__init__()
-
-        self.conv1 = arf(
-            input_channel,
-            output_channel,
-            3,
-            1,
-            1
-        )
-        self.bn = nn.BatchNorm2d(output_channel)
-
-    # 前向传播
-    def forward(self, inp, epoch, hw_range):
-        inp = self.conv1(inp, epoch, hw_range)
-        inp = self.bn(inp)
-        return inp  # 将输入 inp 传递给 self.layers，返回卷积块的输出
 
 
 class ResNet(nn.Module):
@@ -262,18 +230,3 @@ def resnet12(drop_rate=0.0, max_pool=True, **kwargs):
     """
     model = ResNet(BasicBlock, [1, 1, 1, 1], drop_rate=drop_rate, max_pool=max_pool, **kwargs)
     return model
-
-
-# if __name__ == '__main__':
-#     model = resnet12()
-#     data = torch.randn(2, 3, 84, 84)
-#     x = model(data)
-#     print(x.size())
-#     print(x.shape)
-if __name__ == '__main__':
-    model = resnet12()
-    data = torch.randn(2, 3, 84, 84)
-    H, W = data.shape[-2:]          # (84, 84)
-    x = model(data, epoch=0, hw_range=(H, W))
-    print(x.shape)
-
